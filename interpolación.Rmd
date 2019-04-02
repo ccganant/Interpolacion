@@ -1,0 +1,132 @@
+---
+title: "Modelos digitales e interpolación"
+author: "Cristian Gañan"
+date: ""
+output: 
+  html_document:
+    css: estilo.css
+    df_print: paged
+    
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+## Introducción
+
+Se presenta acontinuación algunos modelos digitales, hechos a partír de curvas de nivel; despues se realizarón modelos de interpolación tales como `IDW`, `Kriging`, `Natural neighbor` y `Spline` con el fín de comparalos y comprender sus aplicaciónes. La finalidad con estos procesos es el de realizar mapas a partir de formatos raster, poderlos manipular y obtener información, en este caso se trató la informacion dada con el proposito de realizar un mapa de zonas de vida de una cuenca hidrográfica.
+
+## Desarrollo
+
+Para realizar el mapa de zonas de vida, fue necesario tener una información inicial, la cual consiste en tener: área de la cuenca (preferible en formato vector), un archivo que contenga las curvas de nivel de la zona, información de estaciónes climáticas y pisos altitudinales.
+
+Inicialmente se realiza una red de triangulos irregurales `TIN`, a partir de las curvas de nivel, esto se hace para obtener la informaciòn de la morfología de la superficie; depues de haber convertído el `TIN` en raster se extrae la información para el area de estudio con esta sencilla operación ya se tendrá un raster de elevación de la cuenca.
+
+<center>
+![](Imagenes/elevacion.PNG)
+</center>
+
+Ahora teniendo en cuenta que es posible hallar la distribución de la temperatura en la cuenca, por medio de una regresión lineal, donde se establece que existe una disminución de $6ºC$ en temperatura anual multianual cada que se ascienden $1000 m$ sobre el nivel del mar, mediante la ecuacíon : $Temperatura= (30.03 - 0.0062) * elevacion$; muchos programas de analisis geografíco tiene herramientas para hacer operaciónes con archivos formato raster, asi que utilizando estas herramientas es facil obtener el resultado, cabe la pena aclarar que en la ecuación $elevacion$ es el raster que contiene la informacion de elevaciòn.
+
+<center>
+![](Imagenes/Temp.PNG)
+</center>
+
+Seguidamente se halla el modelo de ETPP con la ecuaciòn: $ETPP= 58.93 * Temperatura$, nuevamente acá $Temperatura$ es el raster que contiene esta información.
+
+<center>
+![](Imagenes/ETPP.PNG)
+</center>
+
+Ahora utilizando el método de interpolacion `Kriging` se halla el modelo de precipitación para la cuenca, tomando como datos los proporcionados por las estaciónes climaticas, despues se estrae la información referida a la cuenca.
+
+<center>
+![](Imagenes/Prep.PNG)
+</center>
+
+Luego es necesario generar provicias de humedad; con la ecuación $Humedad= ETPP/Precipitacion$ se pueden hallar, ahora teniendo en cuenta la siguiente tabla se reclasifica los valores del raster.
+
+$ETPP/P$|Provincia de humedad|Clasificación|
+--------|--------------------|-------------|
+0.125-0.025|Pluvial|1
+0.25-050|Muy húmedo|2
+
+<center>
+![](Imagenes/Humedad.PNG)
+</center>
+
+Finalmente para obtener el mapa de zonas de vida se realiza la suma del raster de pisos altitudinales^[Si no se tiene en formato raster la información, es posible convertir varios formatos entre ellos el vector a raster] con el raster de humedad; es decir: $zona de vida= P.alt + Humedad$. Despues con ayuda de la clasificación de zonas de vida de `holdridge` se clasifican las coberturas, hay que tener muy encuenta la información contenida en las provincias de humedad y de pisos altitudinales para hacer la clasificación.
+
+<center>
+![](Imagenes/hold.png)
+</center>
+
+Para ver en mapa [Clik aquí](https://github.com/ccganant/Interpolacion/blob/master/zona%20de%20bida.pdf)
+
+### Comparación de modelos
+
+Como se mencionó a inicío, uno de los objetivos con este trabajo era el de comparar diferentes modelos, utilizando un software especializado para estas operaciónes se llegaron a los siguientes resultados.
+
+Utlizando, datos de batimetría se interpolo para hallar información referente a una zona del Magdalena estos son los resultados según cada modelo.
+
+```{r}
+library(gdata)
+datos<- read.xls("Imagenes/datos.xls")
+
+library(dplyr)
+
+modelo<- datos %>% 
+  select(c(Elevation,IDW,Natural,Kriging300,Kriging100,Spline)) %>% 
+  filter(IDW != -9999 & Natural != -9999 & Kriging100 != -9999 & Kriging300 != -9999 & Spline != -9999)
+
+modelo
+
+```
+
+Despues se sacaron las desviaciónes estanadar a cada modelo, para comparar:
+
+```{r}
+modelo %>% 
+  summarise(IDW= sd(IDW), Natural= sd(Natural), Kriging300= sd(Kriging300), 
+            Kriging100= sd(Kriging100), Spline= sd(Spline))
+```
+
+Como puede verse en la tabla anterior, al parecer los medelos `Kriging` se ajustan mejor a los datos dados pues su desviación estandar es menor que la de los demas modelos; era de espearse este resultado pues los modelos `Kriging` son exactos y geoestadísticos. 
+
+El modelo `Spline` a pesar que obliga a pasar por los puntos de entrada, es el mas inexacto en este caso pues llegando a tener la desviación estanadar mas alta.
+
+Ahora bien, para tener otra visión del comportamiento de los modelos se graficaron obteníendo lo siguiente:
+
+```{r}
+par(mfrow= c(1,2))
+hist(modelo$IDW, probability = TRUE, ylim = c(0.00,0.1), col = "black",
+     xlab = "IDW", main= "Modelo IDW")
+lines(density(modelo$IDW), col= "red", lwd= 2)
+
+hist(modelo$Natural, probability = TRUE, ylim = c(0.00,0.1), col = "black",
+     xlab = "Natural neighbor", main= "Modelo Natural neighbor")
+lines(density(modelo$Natural), col= "red", lwd= 2)
+
+hist(modelo$Kriging300, probability = TRUE, ylim = c(0.00,0.1), col = "black",
+     xlab = "Kriging300", main= "Modelo Kriging cell= 300")
+lines(density(modelo$Kriging300), col= "red", lwd= 2)
+
+hist(modelo$Kriging100, probability = TRUE, ylim = c(0.00,0.1), col = "black",
+     xlab = "Kriging100", main= "Modelo kriging cell= 100")
+lines(density(modelo$Kriging100), col= "red", lwd= 2)
+
+hist(modelo$Spline, probability = TRUE, ylim = c(0.00,0.1), col = "black",
+     xlab = "Spline", main= "Modelo Spline")
+lines(density(modelo$Spline), col= "red", lwd= 2)
+```
+
+En los histogramas, se observa que los modelos `Kriging` tienen mas densidad de observaciónes con una desviación estandar mas baja en comparación con los demás modelos, ademas el tamaño de la celda del raster $100 y 300 m$ para estos mismos, parece ser, mirando las deviaciónes estandar y los grafícos que se comporta mejor con tamaños de celda mayor.
+
+Hay un cierta similitud en los modelos `IDW` y `Natural neighbor` según lo muestran los histogramas como sus deviaciónes estandar.
+
+
+
+
+
+
